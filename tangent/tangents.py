@@ -26,10 +26,6 @@ If a keyword argument isn't present in the tangent compound statements, it means
 that Tangent doesn't support it, and an error will be raised if it appears in
 user code.
 
-Keyword arguments that are supported should always have the default value
-`DEFAULT`, which means that they will be passed the default value of the
-original function.
-
 Tangents have access to the inputs and outputs of the primal. They are expected
 to contain expressions for the derivative with respect to the output. They don't
 have access to any intermediate variables from the primal.
@@ -107,12 +103,12 @@ def tsub(z, x, y):
 
 @tangent_(gast.Div)
 def tdiv(z, x, y):
-  d[z] = (d[x] * y - x * d[y]) / (y**2.0)
+  d[z] = (d[x] * y - x * d[y]) / (y * y)
 
 
 @tangent_(gast.Pow)
 def tpow(z, x, y):
-  d[z] = y * (x**(y - 1.0)) * d[x]
+  d[z] = y * (x ** (y - 1.0)) * d[x]
 
 
 @tangent_(gast.USub)
@@ -140,19 +136,20 @@ def tlist(z, x):
 #
 
 
-@tangent_(numpy.sin)
-def tsin(z, x):
-  d[z] = d[x] * numpy.cos(x)
-
-
 @tangent_(numpy.cos)
 def tcos(z, x):
   d[z] = -d[x] * numpy.sin(x)
 
 
-@tangent_(numpy.tanh)
-def ttanh(z, x):
-  d[z] = d[x] / numpy.cosh(x)**2.0
+@tangent_(numpy.sin)
+def tsin(z, x):
+  d[z] = d[x] * numpy.cos(x)
+
+
+@tangent_(numpy.tan)
+def ttan(z, x):
+  cx = numpy.cos(x)
+  d[z] = d[x] / (cx * cx)
 
 
 @tangent_(numpy.cosh)
@@ -163,6 +160,27 @@ def tcosh(z, x):
 @tangent_(numpy.sinh)
 def tsinh(z, x):
   d[z] = d[x] * numpy.cosh(x)
+
+
+@tangent_(numpy.tanh)
+def ttanh(z, x):
+  cx = numpy.cosh(x)
+  d[z] = d[x] / (cx * cx)
+
+
+@tangent_(numpy.arccos)
+def tarccos(z, x):
+  d[z] = -d[x] / numpy.sqrt(1.0 - x * x)
+
+
+@tangent_(numpy.arcsin)
+def tarcsin(z, x):
+  d[z] = d[x] / numpy.sqrt(1.0 - x * x)
+
+
+@tangent_(numpy.arctan)
+def tarctan(z, x):
+  d[z] = d[x] / (1.0 + x * x)
 
 
 @tangent_(numpy.exp)
@@ -206,13 +224,13 @@ def ttranspose(z, x):
 
 
 @tangent_(numpy.sum)
-def tsum(y, x, axis=grads.DEFAULT, dtype=grads.DEFAULT, keepdims=grads.DEFAULT):
+def tsum(y, x, axis=None, dtype=None, keepdims=False):
   d[y] = numpy.sum(d[x], axis=axis, dtype=dtype, keepdims=keepdims)
 
 
 @tangent_(numpy.mean)
 def tmean(
-    y, x, axis=grads.DEFAULT, dtype=grads.DEFAULT, keepdims=grads.DEFAULT):
+    y, x, axis=None, dtype=None, keepdims=False):
   d[y] = numpy.mean(d[x], axis=axis, dtype=dtype, keepdims=keepdims)
 
 
@@ -232,13 +250,18 @@ def tndim(z, x):
 
 
 @tangent_(numpy.rollaxis)
-def trollaxis(z, a, axis, start=grads.DEFAULT):
+def trollaxis(z, a, axis, start=0):
   d[z] = numpy.rollaxis(d[a], axis, start)
 
 
 @tangent_(numpy.shape)
 def tshape(z, x):
   d[z] = numpy.shape(d[x])
+
+
+@tangent_(numpy.array)
+def tarray(z, x):
+  d[z] = numpy.array(d[x])
 
 
 #
@@ -252,7 +275,7 @@ def tadd_grad(z, x, y):
 
 
 @tangent_(tangent.init_grad)
-def tinit_grad(z, x, allow_lazy_initializer=grads.DEFAULT):
+def tinit_grad(z, x, allow_lazy_initializer=False):
   d[z] = tangent.init_grad(d[x], allow_lazy_initializer=False)
 
 

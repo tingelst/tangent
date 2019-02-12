@@ -62,7 +62,7 @@ class TreeTransformer(gast.NodeTransformer):
     self._top = True
 
   def prepend(self, node):
-    """Prepend a statement to the curren statement.
+    """Prepend a statement to the current statement.
 
     Note that multiple calls to prepend will result in the last statement to be
     prepended to end up at the top.
@@ -272,7 +272,7 @@ class Remove(gast.NodeTransformer):
       if not node.orelse:
         return
       else:
-        node.test = gast.UnaryOp(op=gast.Not, operand=node.test)
+        node.test = gast.UnaryOp(op=gast.Not(), operand=node.test)
         node.body, node.orelse = node.orelse, node.body
     elif isinstance(node, (gast.While, gast.For)) and not node.body:
       return node.orelse

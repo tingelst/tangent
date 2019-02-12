@@ -25,7 +25,7 @@ blacklisted = [
     'cart2polar',
     'iterpower_with_nested_def',
     'fn_multiple_return',
-    'grad_of',
+    'insert_grad_of',
     '_trace_mul',
     '_nontrace_mul',
     'active_subscript',  # TODO: fix then remove from blacklist
@@ -102,5 +102,9 @@ def pytest_generate_tests(metafunc):
   vectors = [np.random.randn(i) for i in ((3,) if short else (3, 5, 10))]
   if 'x' in metafunc.fixturenames:
     metafunc.parametrize('x', vectors)
+
+  square_matrices = [np.random.randn(*i) for i in (((3, 3),) if short else ((1, 1), (5, 5)))]
+  if 'sqm' in metafunc.fixturenames:
+    metafunc.parametrize('sqm', square_matrices)
 
   tfe_utils.register_parametrizations(metafunc, short)

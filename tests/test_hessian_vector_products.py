@@ -20,10 +20,17 @@ HVPs are run in three configurations:
 """
 
 from autograd import hessian_vector_product
-import autograd.numpy as anp
-import numpy as np
+import autograd.numpy as np
 import pytest
 import tangent
+import tfe_utils
+
+@pytest.fixture
+def tf():
+  try:
+    import tensorflow as tf
+  except ImportError:
+    pytest.skip()
 
 
 # This test function broke HVPs several times
@@ -32,12 +39,6 @@ def f_straightline(x):
   a = x * x * x
   b = a * x**2.0
   return np.sum(b)
-
-
-def af_straightline(x):
-  a = x * x * x
-  b = a * x**2.0
-  return anp.sum(b)
 
 
 def cube(a):
@@ -51,13 +52,13 @@ def f_calltree(x):
   return np.sum(b)
 
 
-def af_calltree(x):
-  a = cube(x)
-  b = a * x**2.0
-  return anp.sum(b)
+def tf_straightline(x, tf):
+  a = x * x * x
+  b = a * x ** 2.0
+  return tf.reduce_sum(b)
 
 
-def _test_hvp(func, afunc, optimized):
+def _test_hvp(func, optimized):
   np.random.seed(0)
   a = np.random.normal(scale=1, size=(300,)).astype('float32')
   v = a.ravel()
@@ -67,20 +68,52 @@ def _test_hvp(func, afunc, optimized):
     for mode2 in modes:
       if mode1 == mode2 == 'forward':
         continue
-      df = tangent.grad(func, mode=mode1, motion='joint', optimized=optimized)
-      ddf = tangent.grad(df, mode=mode2, motion='joint', optimized=optimized)
+      df = tangent.autodiff(
+          func,
+          mode=mode1,
+          motion='joint',
+          optimized=optimized,
+          check_dims=False)
+      ddf = tangent.autodiff(
+          df, mode=mode2, motion='joint', optimized=optimized, check_dims=False)
       dx = ddf(a, 1, v)
-      hvp_ag = hessian_vector_product(afunc)
+      hvp_ag = hessian_vector_product(func)
       dx_ag = hvp_ag(a, v)
       assert np.allclose(dx, dx_ag)
 
 
-def test_hvp_straightline(optimized):
-  _test_hvp(f_straightline, af_straightline, optimized)
+def _test_tf_hvp(func, optimized, tf):
+  a = tf.random_normal(shape=(300,))
+  v = tf.reshape(a, shape=(-1,))
+
+  modes = ['forward', 'reverse']
+  for mode1 in modes:
+    for mode2 in modes:
+      if mode1 == mode2 == 'forward':
+        continue
+      df = tangent.autodiff(
+          func,
+          mode=mode1,
+          motion='joint',
+          optimized=optimized,
+          check_dims=False)
+      ddf = tangent.autodiff(
+          df, mode=mode2, motion='joint', optimized=optimized, check_dims=False)
+      dx = ddf(a, tf.constant(1.0), v)
+      # We just ensure it computes something in this case.
+      assert dx.shape == a.shape
 
 
-def test_hvp_calltree(optimized):
-  _test_hvp(f_calltree, af_calltree, optimized)
+def test_hvp_complex_tf(optimized, tf):
+  _test_tf_hvp(tf_straightline, optimized, tf)
+
+
+def test_hvp_straightline(optimized, tf):
+  _test_hvp(f_straightline, optimized, tf)
+
+
+def test_hvp_calltree(optimized, tf):
+  _test_hvp(f_calltree, optimized, tf)
 
 
 if __name__ == '__main__':

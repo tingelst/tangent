@@ -25,9 +25,12 @@ from __future__ import division
 import numpy as np
 
 import tangent
-from tangent import grad_of
+from tangent import insert_grad_of
 
-import tensorflow as tf
+try:
+  import tensorflow as tf
+except ImportError:
+  tf = None
 
 
 def id_(a):
@@ -42,6 +45,10 @@ def sum_(x):
   return np.sum(x)
 
 
+def cast_sum_(x):
+  return np.sum(np.array(x))
+
+
 def overwrite_call(x):
   x = np.sum(x)
   x = x * x
@@ -52,7 +59,7 @@ def tanh(a):
   return np.tanh(a)
 
 
-def I_assign(a):
+def identity_assign(a):
   b = a
   return b
 
@@ -221,6 +228,12 @@ def test_list_and_subscript(a):
   x = [1.0, a, 3.0]
   return x[0] * x[1]
 
+def test_implicit_indexing(x):
+  res = 0.0
+  for a in x:
+    res += a
+  return res
+
 # TODO: needs a numpy equivalent, and all iterables collections too
 # def test_subscript_overwrite(a):
 #     x = [1,a*a,3]
@@ -310,7 +323,7 @@ def third_pow(a):
 
 
 def direct_third_pow(a):
-  return a**3
+  return a ** 3
 
 
 def iter_third_pow1(a):
@@ -386,8 +399,62 @@ def numpy_exp(a):
 def numpy_exp2(a):
   return np.exp(np.exp(a))
 
+
 def numpy_sqrt(a):
-  return np.sqrt(a)
+  if a >= 0:
+    r = np.sqrt(a)
+  else:
+    r = np.sqrt(-a)
+  return r
+
+
+def numpy_cos(a):
+  return np.cos(a)
+
+
+def numpy_sin(a):
+  return np.sin(a)
+
+
+def numpy_tan(a):
+  return np.tan(a)
+
+
+def numpy_cosh(a):
+  return np.cosh(a)
+
+
+def numpy_sinh(a):
+  return np.sinh(a)
+
+
+def numpy_tanh(a):
+  return np.tanh(a)
+
+
+def numpy_arccos(a):
+  return np.arccos(a)
+
+
+def numpy_arcsin(a):
+  return np.arcsin(a)
+
+
+def numpy_arctan(a):
+  return np.arctan(a)
+
+
+def numpy_atleast_1d(x):
+  return np.sum(np.atleast_1d(x))
+
+
+def numpy_atleast_2d(x):
+  return np.sum(np.atleast_2d(x))
+
+
+def numpy_atleast_3d(x):
+  return np.sum(np.atleast_3d(x))
+
 
 # Label is 0 or 1
 
@@ -398,6 +465,11 @@ def logistic_regression(input, label, W, b):
   label_probabilities = prediction * label + (1 - prediction) * (1 - label)
   loss = -np.sum(np.log(label_probabilities))
   return loss
+
+
+def det(sqm):
+  return np.linalg.det(sqm)
+
 
 # ================================================
 # TFE grads
@@ -640,7 +712,7 @@ def cart2polar(a, b):
 
 def inlining_contextmanager(a):
   b = a * a
-  with grad_of(a) as g:
+  with insert_grad_of(a) as g:
     g = g * 0.9
   c = b * a
   return c
@@ -709,7 +781,10 @@ def stack_pushing(a):
 
 
 def gradgrad_pow(a, b):
-  a = a ** b
+  if a >= 0:
+    a = a ** b
+  else:
+    a = (-a) ** b
   return a
 
 
@@ -754,3 +829,7 @@ def redefining_var_as_list(a):
 
 def nested_dict(p):
   return p['i']['j'] * p['i']['k']
+
+
+def extended_slice(x):
+  return np.sum(x[::2, np.newaxis])

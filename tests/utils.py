@@ -21,15 +21,14 @@ import autograd.numpy as ag_np
 import numpy as np
 import tangent
 
-# Hack Autograd's NumPy implementation that may be missing the definition
-# for _NoValue.
+# Autograd's NumPy implementation may be missing the definition for _NoValue.
 if not hasattr(ag_np, '_NoValue'):
   ag_np._NoValue = np._NoValue  # pylint: disable=protected-access
 
 
 def assert_forward_not_implemented(func, wrt):
   try:
-    tangent.grad(func, mode='forward', preserve_result=False, wrt=wrt)
+    tangent.autodiff(func, mode='forward', preserve_result=False, wrt=wrt)
     assert False, 'Remove this when implementing.'
   except NotImplementedError:
     pass
@@ -43,7 +42,7 @@ def _assert_allclose(a, b, tol=1e-5):
     try:
       a = np.nan_to_num(a)
       b = np.nan_to_num(b)
-      assert np.allclose(a, b, tol), ('Expected: %s\nGot: %s' % (a, b))
+      assert np.allclose(a, b, tol), ('Expected: %s\nGot: %s' % (b, a))
     except TypeError:
       raise TypeError('Could not compare values %s and %s' % (a, b))
 
@@ -114,8 +113,9 @@ def test_reverse_array(func, motion, optimized, preserve_result, *args):
     else:
       init_grad = 1
     func.__globals__['np'] = np
-    df = tangent.grad(
+    df = tangent.autodiff(
         func,
+        mode='reverse',
         motion=motion,
         optimized=optimized,
         preserve_result=preserve_result,
@@ -151,7 +151,7 @@ def test_forward_array(func, wrt, preserve_result, *args):
 
   def tangent_func():
     func.__globals__['np'] = np
-    df = tangent.grad(
+    df = tangent.autodiff(
         func,
         mode='forward',
         preserve_result=preserve_result,

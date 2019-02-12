@@ -14,16 +14,20 @@
 """TensorFlow extensions."""
 from __future__ import absolute_import
 
+from numbers import Number
+
 import numpy as np
 from tangent import grads
+from tangent import non_differentiable
 from tangent import tangents
 from tangent import utils
 from tangent.grads import adjoint
-from tangent.grads import DEFAULT
-from tangent.grads import register_non_differentiable_functions
 from tangent.tangents import tangent_
+from tangent.utils import array_shapes_match
 from tangent.utils import register_all_add_grad
+from tangent.utils import register_all_shape_checker
 from tangent.utils import register_init_grad
+from tangent.utils import register_shape_function
 from tangent.utils import register_unbroadcast
 from tangent.utils import register_unreduce
 import tensorflow as tf
@@ -44,7 +48,15 @@ def shape_as_list(t):
   return t.shape.as_list()
 
 
-register_non_differentiable_functions(
+def tensor_shapes_match(a, b):
+  return tf.shape(a).shape == tf.shape(b).shape
+
+
+register_shape_function(ops.EagerTensor, shape_as_list)
+register_shape_function(resource_variable_ops.ResourceVariable, shape_as_list)
+
+
+non_differentiable.register_non_differentiable_functions(
     tf.shape, tf.to_float, tf.equal, tf.constant,
     tf.zeros, tf.ones, tf.zeros_like, tf.ones_like,
     size, shape_as_list, dtype)
@@ -55,8 +67,11 @@ register_init_grad(resource_variable_ops.ResourceVariable, tf.zeros_like)
 
 
 register_all_add_grad(
-    tf.add, ops.EagerTensor, resource_variable_ops.ResourceVariable)
+    tf.add, (ops.EagerTensor, resource_variable_ops.ResourceVariable))
 
+register_all_shape_checker(
+    tensor_shapes_match,
+    (ops.EagerTensor, resource_variable_ops.ResourceVariable))
 
 #
 # Utilities
@@ -209,24 +224,25 @@ def dtfreshape(y, x, shape):
 
 
 @adjoint(tf.reduce_sum)
-def dtfreduce_sum(y, x, axis=DEFAULT, keep_dims=DEFAULT):
+def dtfreduce_sum(y, x, axis=None, keep_dims=False):
+  # TODO: We may be able to assume unreduce_tensor works throughout.
   d[x] = tangent.unreduce(d[y], tangent.shape_as_list(x), axis, keep_dims)
 
 
 @adjoint(tf.reduce_mean)
-def dtfreduce_mean(y, x, axis=DEFAULT, keep_dims=DEFAULT):
+def dtfreduce_mean(y, x, axis=None, keep_dims=False):
   n = tf.constant(float(tangent.size(x, axis)))
   d[x] = tf.divide(
       tangent.unreduce(d[y], tangent.shape_as_list(x), axis, keep_dims), n)
 
 
 @adjoint(tf.reduce_max)
-def dtfreduce_max(y, x, axis=DEFAULT, keep_dims=DEFAULT):
+def dtfreduce_max(y, x, axis=None, keep_dims=False):
   mask = tf.to_float(
       tf.equal(
           tangent.unreduce(y, tangent.shape_as_list(x), axis, keep_dims), x))
   d[x] = tf.multiply(
-      tangent.unreduce(d[y], tangent.shape_as_list(x), axis, keep_dims), mask),
+      tangent.unreduce(d[y], tangent.shape_as_list(x), axis, keep_dims), mask)
 
 
 @adjoint(tf.add)
@@ -267,7 +283,7 @@ def dtfsquared_difference(z, x, y):
 
 
 @adjoint(tf.matmul)
-def dtfmatmul(z, x, y, transpose_a=DEFAULT, transpose_b=DEFAULT):
+def dtfmatmul(z, x, y, transpose_a=False, transpose_b=False):
   d[x] = tangent.matmul_adjoint_x(d[z], x, y, transpose_a, transpose_b)
   d[y] = tangent.matmul_adjoint_y(d[z], x, y, transpose_a, transpose_b)
 
@@ -309,6 +325,11 @@ def dtfmax_pool(y, x, sizes, strides, padding):
 #
 # Tangents
 #
+
+
+@tangent_(shape_as_list)
+def tshape_as_list(y, x):
+  d[y] = tangent.shape_as_list(d[x])
 
 
 @tangent_(tf.exp)
@@ -353,17 +374,17 @@ def ttfreshape(y, x, shape):
 
 
 @tangent_(tf.reduce_sum)
-def ttfreduce_sum(y, x, axis=DEFAULT, keep_dims=DEFAULT):
+def ttfreduce_sum(y, x, axis=None, keep_dims=False):
   d[y] = tf.reduce_sum(d[x], axis, keep_dims)
 
 
 @tangent_(tf.reduce_mean)
-def ttfreduce_mean(y, x, axis=DEFAULT, keep_dims=DEFAULT):
+def ttfreduce_mean(y, x, axis=None, keep_dims=False):
   d[y] = tf.reduce_mean(d[x], axis, keep_dims)
 
 
 @tangent_(tf.reduce_max)
-def ttfreduce_max(y, x, axis=DEFAULT, keep_dims=DEFAULT):
+def ttfreduce_max(y, x, axis=None, keep_dims=False):
   mask = tf.to_float(
       tf.equal(
           tangent.unreduce(

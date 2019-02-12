@@ -39,6 +39,7 @@ from tangent import fixes
 from tangent import funcsigs
 from tangent import grads
 from tangent import naming
+from tangent import non_differentiable
 from tangent import quoting
 from tangent import template
 from tangent import tracing
@@ -111,6 +112,8 @@ class ReverseAD(object):
         be taken.
     preserve_result: A boolean indicating whether or not the generated gradient
         function should also return the output of the original function.
+    check_dims: A boolean indicating whether the seed derivatives should have
+        their dimensions checked to match their primal counterpart.
 
   Attributes:
     required: List of user-defined functions that the primal calls.
@@ -118,10 +121,11 @@ class ReverseAD(object):
         global namespace.
   """
 
-  def __init__(self, wrt, preserve_result):
+  def __init__(self, wrt, preserve_result, check_dims):
     self.required = []
     self.wrt = wrt
     self.preserve_result = preserve_result
+    self.check_dims = check_dims
 
   def visit(self, node):
     """Visit a node.
@@ -232,6 +236,7 @@ class ReverseAD(object):
       body.append(assign_stored_result)
       dx.elts.append(stored_result_node)
 
+
     for _dx in dx.elts:
       _dx.ctx = gast.Load()
     return_dx = gast.Return(value=dx)
@@ -253,6 +258,17 @@ class ReverseAD(object):
       y = y.elts[0]
     dy = gast.Name(id=self.namer.grad(y.id), ctx=gast.Param(),
                    annotation=None)
+
+    if self.check_dims:
+
+      def shape_match_template(primal, adjoint):
+        assert tangent.shapes_match(
+            primal, adjoint
+        ), 'Shape mismatch between return value (%s) and seed derivative (%s)' % (
+            numpy.shape(primal), numpy.shape(adjoint))
+
+      shape_check = template.replace(shape_match_template, primal=y, adjoint=dy)
+      adjoint_body = shape_check + adjoint_body
 
     # Construct the adjoint
     adjoint_template = grads.adjoints[gast.FunctionDef]
@@ -358,8 +374,8 @@ class ReverseAD(object):
     return primal, adjoint
 
   def visit_With(self, node):
-    """Deal with the special with grad_of(x) statement."""
-    if ast_.is_grad_of_statement(node):
+    """Deal with the special with insert_grad_of(x) statement."""
+    if ast_.is_insert_grad_of_statement(node):
       primal = []
       adjoint = node.body
       if isinstance(adjoint[0], gast.With):
@@ -408,6 +424,13 @@ class ReverseAD(object):
         _stack=self.stack,
         op_id=op_id)
     return primal, adjoint
+
+  def visit_Attribute(self, node):
+    raise ValueError('attributes are not yet supported for gradients')
+
+  def visit_AugAssign(self, node):
+    raise ValueError('AugAssign not supported for gradients. '
+      'Should have been removed by ANF. This is a bug.')
 
   def visit_Assign(self, node):
     """Visit assignment statement."""
@@ -609,6 +632,9 @@ class ReverseAD(object):
   def visit_Compare(self, node):
     return node, []
 
+  def visit_Assert(self, node):
+    return node, []
+
   def primal_and_adjoint_for_tracing(self, node):
     """Build the primal and adjoint of a traceable function.
 
@@ -667,7 +693,7 @@ class ReverseAD(object):
     # Find the function we are differentiating
     func = anno.getanno(node, 'func')
 
-    if func in grads.NON_DIFFERENTIABLE:
+    if func in non_differentiable.NON_DIFFERENTIABLE:
       return node, []
 
     if func == tracing.Traceable:
@@ -720,30 +746,16 @@ class ReverseAD(object):
     # Match the function call to the template
     sig = funcsigs.signature(template_)
     sig = sig.replace(parameters=list(sig.parameters.values())[1:])
-    kwargs = dict((keyword.arg, keyword.value)
-                  for keyword in node.keywords)
-    try:
-      bound_args = sig.bind(*node.args, **kwargs)
-    except TypeError as e:
-      raise ValueError(
-          'Failed to bind arguments for template %s. Error: %s' % (func, e))
-    bound_args.apply_defaults()
+    kwargs = dict((keyword.arg, keyword.value) for keyword in node.keywords)
+    bound_args = sig.bind(*node.args, **kwargs)
 
-    # If any keyword arguments weren't passed, we fill them using the
-    # defaults of the original function
-    if grads.DEFAULT in bound_args.arguments.values():
-      # Build a mapping from names to defaults
-      args = quoting.parse_function(func).body[0].args
-      defaults = {}
-      for arg, default in zip(*map(reversed, [args.args,
-                                              args.defaults])):
-        defaults[arg.id] = default
-      for arg, default in zip(args.kwonlyargs, args.kw_defaults):
-        if default is not None:
-          defaults[arg.id] = default
-      for name, value in bound_args.arguments.items():
-        if value is grads.DEFAULT:
-          bound_args.arguments[name] = defaults[name]
+    # Fill in any missing kwargs with the defaults from the template
+    args = quoting.parse_function(template_).body[0].args
+    kwargs = dict(zip(*map(reversed, [args.args, args.defaults])))
+    kwargs.update(dict(zip(args.kwonlyargs, args.kw_defaults)))
+    for arg, val in kwargs.items():
+      if arg.id not in bound_args.arguments:
+        bound_args.arguments[arg.id] = val
 
     # Let's fill in the template. The first argument is the output, which
     # was stored in a temporary variable
@@ -803,7 +815,7 @@ class ReverseAD(object):
     return node, adjoint
 
 
-def reverse_ad(node, wrt, preserve_result):
+def reverse_ad(node, wrt, preserve_result, check_dims):
   """Perform reverse-mode AD on an AST.
 
   This function analyses the AST to determine which variables are active and
@@ -816,6 +828,9 @@ def reverse_ad(node, wrt, preserve_result):
         derivative.
     preserve_result: A boolean indicating whether the generated
         derivative function should also return the original return value.
+    check_dims: A boolean indicating whether the seed derivatives should have
+        their dimensions checked to match their primal counterpart.
+
 
   Returns:
     mod: A `Module` node containing the naive primal and adjoint of the
@@ -828,7 +843,7 @@ def reverse_ad(node, wrt, preserve_result):
   # Activity analysis
   cfg.forward(node, cfg.Active(wrt))
 
-  ad = ReverseAD(wrt, preserve_result)
+  ad = ReverseAD(wrt, preserve_result, check_dims)
   pri, adj = ad.visit(node)
   mod = gast.Module(body=[pri, adj])
   mod = annotate.find_stacks(mod)

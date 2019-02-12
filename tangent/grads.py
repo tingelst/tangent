@@ -25,10 +25,6 @@ Templates do not support use of `**kwargs`.
 If a keyword argument isn't present in the adjoint, it means that Tangent
 doesn't support it, and an error will be raised if it appears in user code.
 
-Keyword arguments that are supported should always have the default value
-`DEFAULT`, which means that they will be passed the default value of the
-original function.
-
 Adjoints have access to the inputs of the primal, output of the primal, and
 gradients with respect to the output. They are expected to contain expressions
 for the gradient with respect to the input. They don't have access to any
@@ -45,19 +41,6 @@ import numpy
 import tangent
 from tangent import tracing
 
-
-# Means that a keyword argument will be filled in by the default of the actual
-# function
-DEFAULT = object()
-
-# Non-differentiable functions; not in the mathematical sense, but in the sense
-# of them providing zero gradient because they provide meta-information (shape)
-# do integer arithmetic, or are tensor constructors
-NON_DIFFERENTIABLE = set([
-    len,
-    numpy.shape, numpy.zeros, numpy.ones, numpy.zeros_like, numpy.ones_like,
-    tangent.init_grad, tangent.array_size, tangent.Stack,
-])
 
 # TODO: Avoid requiring non-differentiables to define @tangent_s.
 # All non-differentiable function need to create shadow zero-filled variables
@@ -91,11 +74,6 @@ def get_module_functions(modules):
           attr, (types.BuiltinFunctionType, types.FunctionType, numpy.ufunc)):
         module_fns.add(attr)
   return module_fns
-
-
-def register_non_differentiable_functions(*funcs):
-  global NON_DIFFERENTIABLE
-  NON_DIFFERENTIABLE |= set(funcs)
 
 
 def create_register(dict_):
@@ -223,14 +201,14 @@ def uadd(y, x):
 #
 
 
-@adjoint(numpy.tanh)
-def tanh(y, x):
-  d[x] = d[y] * (1.0 - (y * y))
-
-
 @adjoint(numpy.log)
 def log(y, x):
   d[x] = d[y] / x
+
+
+@adjoint(numpy.cos)
+def cos(y, x):
+  d[x] = -d[y] * numpy.sin(x)
 
 
 @adjoint(numpy.sin)
@@ -238,9 +216,10 @@ def sin(y, x):
   d[x] = d[y] * numpy.cos(x)
 
 
-@adjoint(numpy.cos)
-def cos(y, x):
-  d[x] = -d[y] * numpy.sin(x)
+@adjoint(numpy.tan)
+def tan(y, x):
+  cx = numpy.cos(x)
+  d[x] = d[y] / (cx * cx)
 
 
 @adjoint(numpy.cosh)
@@ -251,6 +230,26 @@ def cosh(y, x):
 @adjoint(numpy.sinh)
 def sinh(y, x):
   d[x] = d[y] * numpy.cosh(x)
+
+
+@adjoint(numpy.tanh)
+def tanh(y, x):
+  d[x] = d[y] * (1.0 - (y * y))
+
+
+@adjoint(numpy.arccos)
+def arccos(y, x):
+  d[x] = -d[y] / numpy.sqrt(1.0 - x * x)
+
+
+@adjoint(numpy.arcsin)
+def arcsin(y, x):
+  d[x] = d[y] / numpy.sqrt(1.0 - x * x)
+
+
+@adjoint(numpy.arctan)
+def arctan(y, x):
+  d[x] = d[y] / (1.0 + x * x)
 
 
 @adjoint(numpy.exp)
@@ -277,6 +276,21 @@ def dot(y, x1, x2):
                                            numpy.transpose(x1)))
 
 
+@adjoint(numpy.atleast_1d)
+def atleast_1d(y, x):
+  d[x] = numpy.reshape(d[y], numpy.shape(x))
+
+
+@adjoint(numpy.atleast_2d)
+def atleast_2d(y, x):
+  d[x] = numpy.reshape(d[y], numpy.shape(x))
+
+
+@adjoint(numpy.atleast_3d)
+def atleast_3d(y, x):
+  d[x] = numpy.reshape(d[y], numpy.shape(x))
+
+
 @adjoint(numpy.reshape)
 def reshape(y, x, y_shape):
   d[x] = numpy.reshape(d[y], numpy.shape(x))
@@ -294,13 +308,13 @@ def broadcast_arrays(ys, *args):
 
 
 @adjoint(numpy.sum)
-def sum(y, x, axis=DEFAULT, dtype=DEFAULT, keepdims=DEFAULT):
+def sum(y, x, axis=None, dtype=None, keepdims=False):
   d[x] = tangent.astype(tangent.unreduce(d[y], numpy.shape(x),
                                          axis, keepdims), x)
 
 
 @adjoint(numpy.mean)
-def mean(y, x, axis=DEFAULT, dtype=DEFAULT, keepdims=DEFAULT):
+def mean(y, x, axis=None, dtype=None, keepdims=False):
   n = tangent.astype(tangent.array_size(x, axis), x)
   d[x] = tangent.astype(tangent.unreduce(d[y], numpy.shape(x),
                                          axis, keepdims), x) / n
@@ -312,29 +326,44 @@ def maximum(ans, x, y):
   d[y] = d[ans] * tangent.balanced_eq(y, ans, x)
 
 
+@adjoint(numpy.array)
+def aarray(ans,x):
+  d[x] = tangent.astype(d[ans],x)
+
+
+@adjoint(numpy.linalg.det)
+def adet(z, x):
+  """d|A|/dA = adj(A).T
+
+  See  Jacobi's formula: https://en.wikipedia.org/wiki/Jacobi%27s_formula
+  """
+  adjugate = numpy.linalg.det(x) * numpy.linalg.pinv(x)
+  d[x] = d[z] * numpy.transpose(adjugate)
+
+
 #
 # Tangent adjoints
 #
 
 
 @adjoint(tangent.unreduce)
-def unreduce(y, x, shape, axis, keepdims):
+def aunreduce(y, x, shape, axis, keepdims):
   d[x] = tangent.unbroadcast(d[y], x)
 
 
 @adjoint(tangent.unbroadcast)
-def unbroadcast(y, array, shape):
-  d[array] = tangent.unreduce(d[y], numpy.shape(array), None, False)
+def aunbroadcast(y, x, shape):
+  d[x] = tangent.unreduce_like(d[y], x, None, False)
 
 
 @adjoint(tangent.add_grad)
-def add_grad(z, left, right):
+def aadd_grad(z, left, right):
   d[left] = tangent.unbroadcast(d[z], left)
   d[right] = tangent.unbroadcast(d[z], right)
 
 
 @adjoint(tangent.astype)
-def astype(z, array, y):
+def aastype(z, array, y):
   d[array] = tangent.astype(d[z], array)
 
 

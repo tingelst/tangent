@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 
 import tangent
+from tangent.grad_util import INPUT_DERIVATIVE
 from tangent import quoting
 import tfe_utils
 import utils
@@ -55,8 +56,13 @@ def test_logistic_regression(motion, optimized):
   label[1] = 1
 
   func.__globals__['np'] = np
-  df = tangent.grad(
-      func, wrt=(2, 3), motion=motion, optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      wrt=(2, 3),
+      motion=motion,
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dw, db = df(input_, label, w, b)
 
   func.__globals__['np'] = ag_np
@@ -72,8 +78,13 @@ def test_rnn(motion, optimized):
   inputs = np.random.randn(3, 2)
 
   func.__globals__['np'] = np
-  df = tangent.grad(
-      func, wrt=(0, 1), motion=motion, optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      wrt=(0, 1),
+      motion=motion,
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dinputs, dw = df(inputs, w)
 
   num_dinputs = utils.numeric_grad(func)(inputs, w)
@@ -93,12 +104,27 @@ def test_bilinear(optimized):
   b = np.random.randn(1, D)
 
   func.__globals__['np'] = np
-  df = tangent.grad(
-      func, wrt=(0,), motion='joint', optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      wrt=(0,),
+      motion='joint',
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dx = df(x, h, U, w, b)
 
   num_dx = utils.numeric_grad(func)(x, h, U, w, b)
   assert np.allclose(num_dx, dx)
+
+
+def test_attributes():
+  def f(x):
+    return x.shape
+  try:
+    utils.test_reverse_array(f, 'JOINT', False, False, np.array([1.0, 2.0]))
+    assert False
+  except ValueError as expected:
+    assert 'attributes are not yet supported' in str(expected)
 
 
 def test_grad_unary(func, motion, optimized, preserve_result, a):
@@ -121,6 +147,11 @@ def test_grad_vector(func, motion, optimized, preserve_result, x):
   utils.test_reverse_array(func, motion, optimized, preserve_result, x)
 
 
+def test_grad_square_matrix(func, motion, optimized, preserve_result, sqm):
+  """Test gradients of square matrix functions."""
+  utils.test_reverse_array(func, motion, optimized, preserve_result, sqm)
+
+
 def test_grad_binary_int(func, motion, optimized, preserve_result, a, n):
   """Test gradients of functions with scalar and integer input."""
   utils.test_reverse_array(func, motion, optimized, preserve_result, a, n)
@@ -131,7 +162,12 @@ def test_inlining_contextmanager(motion, optimized, a):
   func = tangent.tangent(func)
 
   func.__globals__['np'] = np
-  df = tangent.grad(func, motion=motion, optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      motion=motion,
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dx = df(a)
 
   func.__globals__['np'] = ag_np
@@ -145,7 +181,12 @@ def test_dict_saxpy(motion, optimized, a, b, c):
   func = tangent.tangent(func)
 
   func.__globals__['np'] = np
-  df = tangent.grad(func, motion=motion, optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      motion=motion,
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dx = df(dict(a=a, b=b, c=c))
 
   df_num = utils.numeric_grad(func)
@@ -160,7 +201,12 @@ def test_unpacking_args_saxpy(motion, optimized, a, b, c):
   func = tangent.tangent(func)
 
   func.__globals__['np'] = np
-  df = tangent.grad(func, motion=motion, optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      motion=motion,
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dx = df((a, b, c))
 
   df_num = utils.numeric_grad(func)
@@ -171,7 +217,12 @@ def test_unpacking_args_saxpy(motion, optimized, a, b, c):
 def test_nested_dict(motion, optimized):
   p = dict(i=dict(j=3.0, k=4.0))
   func = nested_dict
-  df = tangent.grad(func, motion=motion, optimized=optimized, verbose=True)
+  df = tangent.autodiff(
+      func,
+      motion=motion,
+      optimized=optimized,
+      verbose=True,
+      input_derivative=INPUT_DERIVATIVE.DefaultOne)
   dx = df(p)
 
   df_ag = ag_grad(func)

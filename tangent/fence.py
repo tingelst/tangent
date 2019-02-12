@@ -29,7 +29,7 @@ from tangent.errors import TangentParseError
 
 def validate(node, source):
   """Call this function to validate an AST."""
-  # TODO: leaving strict checking off to support grad_of
+  # TODO: leaving strict checking off to support insert_grad_of
   lf = LanguageFence(source, strict=False)
   lf.visit(node)
   return node
@@ -268,7 +268,7 @@ class LanguageFence(ast.NodeVisitor):
     self._allow_and_continue(node)
 
   def visit_ExtSlice(self, node):
-    self._reject(node, 'Extended Slices are not supported')
+    self._allow_and_continue(node)
 
   def visit_ListComp(self, node):
     self._allow_and_continue(node)

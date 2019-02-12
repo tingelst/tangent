@@ -103,28 +103,40 @@ class ANF(transformers.TreeTransformer):
     self.namer.target = None
     return node
 
+  def trivialize_slice(self, node):
+    if isinstance(node, gast.Slice):
+      name = self.namer.name(node)
+      target = gast.Name(id=name, ctx=gast.Store(), annotation=None)
+      stmt = gast.Assign(targets=[target], value=None)
+      self.prepend(stmt)
+      stmt.value = gast.Call(
+          func=gast.Name(id='slice', ctx=gast.Load(), annotation=None),
+          args=[
+              self.trivialize(arg) if arg else
+              gast.Name(id='None', ctx=gast.Load(), annotation=None)
+              for arg in [node.lower, node.upper,
+                          node.step]],
+          keywords=[])
+      return gast.Name(id=name, ctx=gast.Load(), annotation=None)
+    elif isinstance(node, gast.ExtSlice):
+      name = self.namer.name(node)
+      target = gast.Name(id=name, ctx=gast.Store(), annotation=None)
+      stmt = gast.Assign(targets=[target], value=None)
+      self.prepend(stmt)
+      dim_names = [self.trivialize_slice(s).id for s in node.dims]
+      stmt.value = gast.Tuple(elts=[
+          gast.Name(id=n, ctx=gast.Load(), annotation=None)
+          for n in dim_names], ctx=gast.Load())
+      return gast.Name(id=name, ctx=gast.Load(), annotation=None)
+    elif isinstance(node, gast.Index):
+      return self.trivialize(node.value)
+    else:
+      raise ValueError(node)
+
   def visit_Subscript(self, node):
     if self.trivializing:
       node.value = self.trivialize(node.value)
-      if isinstance(node.slice, gast.Index):
-        node.slice.value = self.trivialize(node.slice.value)
-      elif isinstance(node.slice, gast.Slice):
-        name = self.namer.name(node.slice)
-        target = gast.Name(id=name, ctx=gast.Store(), annotation=None)
-        stmt = gast.Assign(targets=[target], value=None)
-        self.prepend(stmt)
-        stmt.value = gast.Call(
-            func=gast.Name(id='slice', ctx=gast.Load(), annotation=None),
-            args=[
-                self.trivialize(arg) if arg else
-                gast.Name(id='None', ctx=gast.Load(), annotation=None)
-                for arg in [node.slice.lower, node.slice.upper,
-                            node.slice.step]],
-            keywords=[])
-        node.slice = gast.Index(value=gast.Name(id=name, ctx=gast.Load(),
-                                                annotation=None))
-      else:
-        raise ValueError
+      node.slice = gast.Index(value=self.trivialize_slice(node.slice))
     return node
 
   def visit_Tuple(self, node):
@@ -138,12 +150,19 @@ class ANF(transformers.TreeTransformer):
     return node
 
   def visit_AugAssign(self, node):
+    self.src = quoting.unquote(node)
     self.trivializing = True
-    left = self.trivialize(node.target)
+    self.namer.target = node.target
     right = self.trivialize(node.value)
+    target = self.trivialize(node.target)
+    left = gast.Name(id=target.id, ctx=gast.Load(), annotation=None)
+    node = gast.Assign(targets=[target],
+                       value=gast.BinOp(
+                        left=left, op=node.op, right=right))
+    self.mark(node)
+    node = self.generic_visit(node)
+    self.namer.target = None
     self.trivializing = False
-    node = gast.Assign(targets=[node.target],
-                       value=gast.BinOp(left=left, op=node.op, right=right))
     return node
 
   def visit_Assign(self, node):
@@ -170,7 +189,7 @@ class ANF(transformers.TreeTransformer):
         self.append(stmt)
       node.targets[0] = target
     elif not isinstance(node.targets[0], gast.Name):
-      raise ValueError
+      raise ValueError('Cannot Assign to %s' % type(node.target))
     node = self.generic_visit(node)
     self.namer.target = None
     self.trivializing = False
